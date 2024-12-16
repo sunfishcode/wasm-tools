@@ -4,6 +4,7 @@ use crate::*;
 use anyhow::bail;
 use std::collections::{HashMap, HashSet};
 use std::mem;
+use unicase::UniCase;
 
 #[derive(Default)]
 pub struct Resolver<'a> {
@@ -216,6 +217,8 @@ impl<'a> Resolver<'a> {
             self.cur_ast_index = *i;
             self.resolve_world(id, world)?;
         }
+
+        self.check_items_for_case_collisions()?;
 
         self.decl_lists = decl_lists;
         Ok(UnresolvedPackage {
@@ -883,12 +886,24 @@ impl<'a> Resolver<'a> {
         for field in fields {
             match field {
                 TypeItem::Def(t) => {
-                    let prev = type_defs.insert(t.name.name, Some(t));
+                    let (prev_index, prev) =
+                        type_defs.insert_full(UniCase::new(t.name.name), Some(t));
                     if prev.is_some() {
-                        bail!(Error::new(
-                            t.name.span,
-                            format!("name `{}` is defined more than once", t.name.name),
-                        ))
+                        let prev_name = type_defs.get_index(prev_index).unwrap().0.as_ref();
+                        if prev_name == t.name.name {
+                            bail!(Error::new(
+                                t.name.span,
+                                format!("name `{}` is defined more than once", t.name.name),
+                            ))
+                        } else {
+                            bail!(Error::new(
+                                t.name.span,
+                                format!(
+                                    "name `{}` differs from name `{}` only by case",
+                                    t.name.name, prev_name
+                                ),
+                            ))
+                        }
                     }
                     let mut deps = Vec::new();
                     collect_deps(&t.ty, &mut deps);
@@ -898,14 +913,14 @@ impl<'a> Resolver<'a> {
                     for name in u.names.iter() {
                         let name = name.as_.as_ref().unwrap_or(&name.name);
                         type_deps.insert(name.name, Vec::new());
-                        type_defs.insert(name.name, None);
+                        type_defs.insert(UniCase::new(name.name), None);
                     }
                 }
             }
         }
         let order = toposort("type", &type_deps).map_err(attach_old_float_type_context)?;
         for ty in order {
-            let def = match type_defs.swap_remove(&ty).unwrap() {
+            let def = match type_defs.swap_remove(&UniCase::new(ty)).unwrap() {
                 Some(def) => def,
                 None => continue,
             };
@@ -1477,19 +1492,36 @@ impl<'a> Resolver<'a> {
                     },
                     span,
                 );
-                ret.insert("self".to_string(), shared);
+                ret.insert(UniCase::new("self".to_string()), shared);
             }
         }
         for (name, ty) in params {
-            let prev = ret.insert(name.name.to_string(), self.resolve_type(ty, stability)?);
+            let (prev_index, prev) = ret.insert_full(
+                UniCase::new(name.name.to_string()),
+                self.resolve_type(ty, stability)?,
+            );
             if prev.is_some() {
-                bail!(Error::new(
-                    name.span,
-                    format!("param `{}` is defined more than once", name.name),
-                ))
+                let prev_name = ret.get_index(prev_index).unwrap().0.as_ref();
+                if prev_name == name.name {
+                    bail!(Error::new(
+                        name.span,
+                        format!("param `{}` is defined more than once", name.name),
+                    ))
+                } else {
+                    bail!(Error::new(
+                        name.span,
+                        format!(
+                            "param `{}` differs from param `{}` only by case",
+                            name.name, prev_name
+                        ),
+                    ))
+                }
             }
         }
-        Ok(ret.into_iter().collect())
+        Ok(ret
+            .into_iter()
+            .map(|(name, value)| (name.into(), value))
+            .collect())
     }
 
     fn resolve_results(
@@ -1525,6 +1557,35 @@ impl<'a> Resolver<'a> {
                 Ok(Results::Anon(Type::Id(id)))
             }
         }
+    }
+
+    /// Check that interface and package contents don't have collisions when
+    /// compared case-insensitively.
+    fn check_items_for_case_collisions(&self) -> Result<()> {
+        let mut unicases = HashSet::new();
+        for interface in &self.interface_types {
+            for key in interface.keys() {
+                if !unicases.insert(UniCase::new(key)) {
+                    bail!(
+                        "interface items `{}` and `{}` differ only by case",
+                        key,
+                        unicases.get(&UniCase::new(key)).unwrap()
+                    );
+                }
+            }
+            unicases.clear();
+        }
+        for key in self.package_items.keys() {
+            if !unicases.insert(UniCase::new(key)) {
+                bail!(
+                    "package items `{}` and `{}` differ only by case",
+                    key,
+                    unicases.get(&UniCase::new(key)).unwrap()
+                );
+            }
+        }
+        unicases.clear();
+        Ok(())
     }
 }
 

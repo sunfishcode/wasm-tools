@@ -1,0 +1,5 @@
+param `FOO` differs from param `foo` only by case
+     --> tests/ui/parse-fail/differcase-function-params.wit:6:23
+      |
+    6 |   foo: func(foo: u32, FOO: u64);
+      |                       ^--

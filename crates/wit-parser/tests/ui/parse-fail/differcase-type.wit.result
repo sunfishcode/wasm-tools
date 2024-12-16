@@ -1,0 +1,5 @@
+name `FOO` differs from name `foo` only by case
+     --> tests/ui/parse-fail/differcase-type.wit:6:8
+      |
+    6 |   type FOO = s32;
+      |        ^--

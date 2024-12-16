@@ -28,6 +28,7 @@ serde_derive = { workspace = true, optional = true }
 wasmparser = { workspace = true, optional = true, features = ['validate', 'component-model'] }
 serde_json = { workspace = true, optional = true }
 wat = { workspace = true, optional = true }
+unicase = { workspace = true }
 
 [features]
 default = ['serde', 'decoding']
